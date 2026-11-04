@@ -1,0 +1,29 @@
+{
+  "country": "AR",
+  "timezone": "America/Argentina/Buenos_Aires",
+  "utcOffset": -3,
+  "profiles": {
+    "web": [
+      "React",
+      "Next.js",
+      "Node.js",
+      "TypeScript",
+      "Full Stack",
+      "Product Engineer"
+    ],
+    "game_dev": [
+      "Unity",
+      "Gameplay",
+      "Game Developer",
+      "Multiplayer",
+      "Technical Game Designer"
+    ]
+  },
+  "himalayas": {
+    "maxPagesPerQuery": 2,
+    "minSyncHours": 24,
+    "requestIntervalMs": 1100,
+    "maxChecksPerSync": 15
+  },
+  "remotive": { "minSyncHours": 6 }
+}
