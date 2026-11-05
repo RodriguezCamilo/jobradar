@@ -1,0 +1,40 @@
+{
+  "web": {
+    "years": 3,
+    "level": "junior avanzado / mid",
+    "skills": [
+      "TypeScript",
+      "JavaScript",
+      "React",
+      "Next.js",
+      "Astro",
+      "Node.js",
+      "Express",
+      "Supabase",
+      "PostgreSQL",
+      "MongoDB",
+      "Tailwind",
+      "REST",
+      "autenticación",
+      "integraciones",
+      "arquitectura de MVP/SaaS"
+    ]
+  },
+  "game_dev": {
+    "education": "Desarrollo y Producción de Videojuegos, 2026",
+    "level": "junior / mid",
+    "skills": [
+      "Unity",
+      "C#",
+      "gameplay",
+      "Netcode for GameObjects",
+      "multiplayer",
+      "UI",
+      "narrativa",
+      "Godot básico",
+      "Unreal básico"
+    ],
+    "not_specialist": ["Unreal C++ avanzado", "AAA"]
+  },
+  "work_preference": "Remoto desde Argentina (UTC-3). Comunicación cotidiana preferentemente en español. Comprensión lectora avanzada de inglés; no priorizar inglés oral constante. No excluir por salario ausente."
+}

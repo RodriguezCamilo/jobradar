@@ -1,5 +1,6 @@
 import type { Eligibility, NormalizedJob, Profile } from "./domain";
 import searches from "../../config/searches.json";
+import { classifyLanguage } from "./language";
 
 type Evidence = Pick<
   NormalizedJob,
@@ -262,5 +263,6 @@ export function classifyJob(job: NormalizedJob): NormalizedJob {
     ...job,
     ...classifyTechnical(job.title, job.description),
     ...classifyGeography(job),
+    language: classifyLanguage(job.description, job.application_language),
   };
 }

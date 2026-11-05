@@ -1,4 +1,5 @@
 import type { NormalizedJob, Job } from "../src/lib/domain";
+import { classifyLanguage } from "../src/lib/language";
 export function fixture(overrides: Partial<NormalizedJob> = {}): NormalizedJob {
   return {
     source: "himalayas",
@@ -31,6 +32,9 @@ export function jobFixture(overrides: Partial<Job> = {}): Job {
   const normalized = fixture();
   return {
     ...normalized,
+    language: classifyLanguage(normalized.description),
+    feedback: { rating: "sin_evaluar", reason: null },
+    analysis: null,
     id: "fe2e2a63-7060-4d86-bc3f-46ef529e6402",
     first_discovered_at: "2026-11-04T12:00:00.000Z",
     last_checked_at: "2026-11-04T12:00:00.000Z",

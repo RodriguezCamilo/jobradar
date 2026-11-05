@@ -70,7 +70,7 @@ describe("sincronización manual y caché durable", () => {
     const result = await synchronize();
     expect(himalayas.fetchJobs).not.toHaveBeenCalled();
     expect(remotive.fetchJobs).not.toHaveBeenCalled();
-    expect(ingestJobs).toHaveBeenCalledTimes(2);
+    expect(ingestJobs).toHaveBeenCalledTimes(3);
     expect(
       vi.mocked(ingestJobs).mock.calls.every(([jobs]) => jobs.length === 0),
     ).toBe(true);

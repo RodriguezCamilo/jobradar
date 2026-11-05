@@ -25,5 +25,11 @@
     "requestIntervalMs": 1100,
     "maxChecksPerSync": 15
   },
-  "remotive": { "minSyncHours": 6 }
+  "remotive": { "minSyncHours": 6 },
+  "getonbrd": {
+    "minSyncHours": 24,
+    "maxPagesPerQuery": 2,
+    "perPage": 30,
+    "requestIntervalMs": 1100
+  }
 }

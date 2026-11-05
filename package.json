@@ -1,6 +1,6 @@
 {
   "name": "job-radar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,11 @@
     "verify:apis": "tsx --env-file-if-exists=.env.local scripts/verify-apis.ts",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
     "reclassify": "tsx --env-file-if-exists=.env.local scripts/reclassify.ts",
-    "verify:local": "tsx --env-file-if-exists=.env.local scripts/verify-local.ts"
+    "verify:local": "tsx --env-file-if-exists=.env.local scripts/verify-local.ts",
+    "verify:v2": "tsx --env-file-if-exists=.env.local scripts/verify-v2.ts",
+    "verify:v2-local": "tsx --env-file-if-exists=.env.local scripts/verify-v2-local.ts",
+    "sync:getonbrd": "tsx --env-file-if-exists=.env.local scripts/v2-sync.ts",
+    "backfill:v2": "tsx --env-file-if-exists=.env.local scripts/v2-backfill.ts"
   },
   "dependencies": {
     "he": "^1.2.0",

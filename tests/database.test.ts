@@ -26,6 +26,12 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+  await pg.exec(
+    await readFile(
+      "supabase/migrations/202611040003_v2_analysis_feedback.sql",
+      "utf8",
+    ),
+  );
 });
 afterAll(() => pg.close());
 describe("migración y transacciones PostgreSQL", () => {

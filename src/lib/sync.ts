@@ -8,6 +8,7 @@ import { sources } from "./domain";
 import { readSnapshot, writeSnapshot } from "./cache";
 import { himalayas, normalizeHimalayas } from "./connectors/himalayas";
 import { remotive } from "./connectors/remotive";
+import { getonbrd } from "./connectors/getonbrd";
 import { ApiError, fetchJson, pause } from "./connectors/http";
 import {
   ingestJobs,
@@ -18,7 +19,7 @@ import {
   sourceHistory,
 } from "./repository";
 
-const connectors = { himalayas, remotive };
+const connectors = { himalayas, remotive, getonbrd };
 async function importCandidates(
   source: Source,
   jobs: NormalizedJob[],
@@ -136,7 +137,7 @@ async function synchronizeSource(source: Source): Promise<SyncRun> {
       run.inserted = await importCandidates(source, jobs);
       if (
         result.complete ||
-        (source === "himalayas" && !result.errors.length)
+        (["himalayas", "getonbrd"].includes(source) && !result.errors.length)
       ) {
         await markMissing(
           source,
@@ -172,7 +173,9 @@ async function synchronizeSource(source: Source): Promise<SyncRun> {
   return run;
 }
 
-export async function synchronize(): Promise<SyncRun[]> {
+export async function synchronize(
+  selectedSources: Source[] = [...sources],
+): Promise<SyncRun[]> {
   const dir = path.join(process.cwd(), ".cache");
   await mkdir(dir, { recursive: true });
   const lockPath = path.join(dir, "sync.lock");
@@ -193,7 +196,8 @@ export async function synchronize(): Promise<SyncRun[]> {
       }),
     );
     const runs: SyncRun[] = [];
-    for (const source of sources) runs.push(await synchronizeSource(source));
+    for (const source of new Set(selectedSources))
+      runs.push(await synchronizeSource(source));
     return runs;
   } finally {
     await handle.close();

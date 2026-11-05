@@ -97,14 +97,12 @@ describe("protección de acciones administrativas", () => {
 describe("errores de API", () => {
   afterEach(() => vi.unstubAllGlobals());
   it("429 conserva Retry-After sin reintentar en bucle", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response("rate limited", {
-          status: 429,
-          headers: { "Retry-After": "120" },
-        }),
-      );
+    const fetch = vi.fn().mockResolvedValue(
+      new Response("rate limited", {
+        status: 429,
+        headers: { "Retry-After": "120" },
+      }),
+    );
     vi.stubGlobal("fetch", fetch);
     await expect(fetchJson("https://example.test")).rejects.toMatchObject({
       status: 429,

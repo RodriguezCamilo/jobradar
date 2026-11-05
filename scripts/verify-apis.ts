@@ -3,15 +3,14 @@ import { synchronize } from "../src/lib/sync";
 import { database, hasDatabase } from "../src/lib/database";
 import { listJobs, ingestJobs } from "../src/lib/repository";
 import { readSnapshot } from "../src/lib/cache";
+import { sources } from "../src/lib/domain";
 
 try {
   console.log(
     "Ejecutando sincronización manual; se respetan las ventanas de caché de cada fuente.",
   );
   const runs = await synchronize();
-  const snapshots = await Promise.all(
-    (["himalayas", "remotive"] as const).map(readSnapshot),
-  );
+  const snapshots = await Promise.all(sources.map(readSnapshot));
   const jobs = hasDatabase() ? await listJobs() : [];
   let duplicateInsertions: number | null = null;
   let trackingPersisted: boolean | null = null;

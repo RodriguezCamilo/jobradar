@@ -5,8 +5,13 @@ import type {
   NormalizedJob,
   SyncRun,
   TrackingState,
+  Feedback,
+  JobAnalysis,
 } from "./domain";
 import { normalizeJobUrl } from "./text";
+import { classifyLanguage, mergeLanguageEvidence } from "./language";
+import { analysisHash, getGroqModel, PROMPT_VERSION } from "./analysis-key";
+import { reconcileAssessment } from "./assessment-guard";
 
 export async function ingestJob(
   job: NormalizedJob,
@@ -47,12 +52,59 @@ export async function listJobs(): Promise<Job[]> {
   const sql = database();
   const rows =
     await sql`select j.*, jsonb_build_object('status',t.status,'seen_at',t.seen_at) as tracking,
+    jsonb_build_object('rating',coalesce(f.rating,'sin_evaluar'),'reason',f.reason) as feedback,
+    (select s.normalized_payload->'requirements' from public.job_sources s where s.job_id=j.id and s.normalized_payload->'requirements' is not null order by s.last_checked_at desc limit 1) as requirements,
+    (select s.normalized_payload->>'application_language' from public.job_sources s where s.job_id=j.id and s.normalized_payload->>'application_language' is not null order by s.last_checked_at desc limit 1) as application_language,
+    (select coalesce(jsonb_agg(to_jsonb(a)),'[]') from (select * from public.job_analyses a where a.job_id=j.id order by a.updated_at desc limit 10) a) as analyses,
     (select jsonb_agg(jsonb_build_object('source',s.source,'external_id',s.external_id,
-      'original_url',s.original_url,'application_url',s.application_url,'validity',s.validity,'last_checked_at',s.last_checked_at)
+      'original_url',s.original_url,'application_url',s.application_url,'validity',s.validity,'last_checked_at',s.last_checked_at,'language',s.normalized_payload->'language')
       order by s.source) from public.job_sources s where s.job_id=j.id) as sources
-    from public.jobs j join public.job_tracking t on t.job_id=j.id where cardinality(j.profiles)>0 order by j.first_discovered_at desc`;
+    from public.jobs j join public.job_tracking t on t.job_id=j.id left join public.job_feedback f on f.job_id=j.id where cardinality(j.profiles)>0 order by j.first_discovered_at desc`;
   // PostgreSQL returns Date for timestamps and JSON strings for nested timestamps; serialize consistently.
-  return JSON.parse(JSON.stringify(rows)) as Job[];
+  const jobs = JSON.parse(JSON.stringify(rows)) as (Job & {
+    analyses: JobAnalysis[];
+  })[];
+  return jobs.map(({ analyses, ...job }) => {
+    const hash = analysisHash(job);
+    const current = analyses.find(
+      (a) =>
+        a.content_hash === hash &&
+        a.prompt_version === PROMPT_VERSION &&
+        a.model === getGroqModel(),
+    );
+    const analysis = current ?? analyses[0] ?? null;
+    const language = mergeLanguageEvidence(
+      classifyLanguage(job.description, job.application_language),
+      job.sources.flatMap((s) => (s.language ? [s.language] : [])),
+    );
+    return {
+      ...job,
+      language,
+      analysis: analysis
+        ? {
+            ...analysis,
+            result: analysis.result
+              ? reconcileAssessment(analysis.result)
+              : null,
+            current: Boolean(current),
+          }
+        : null,
+    };
+  });
+}
+export async function saveFeedback(
+  id: string,
+  feedback: Feedback,
+): Promise<boolean> {
+  const sql = database();
+  const rows = await sql`insert into public.job_feedback(job_id,rating,reason)
+    select id,${feedback.rating},${feedback.rating === "sin_evaluar" ? null : feedback.reason} from public.jobs where id=${id}
+    on conflict(job_id) do update set rating=excluded.rating,reason=excluded.reason,updated_at=now() returning job_id`;
+  return Boolean(rows.length);
+}
+export async function exportFeedback() {
+  return database()`select j.title,j.company,j.original_url as url,f.rating,f.reason,f.updated_at
+    from public.job_feedback f join public.jobs j on j.id=f.job_id where f.rating<>'sin_evaluar' order by f.updated_at desc limit 500`;
 }
 export async function listRuns(): Promise<SyncRun[]> {
   return JSON.parse(

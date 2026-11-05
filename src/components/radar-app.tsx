@@ -21,12 +21,21 @@ import {
   Search,
   SlidersHorizontal,
   X,
+  Download,
+  Sparkles,
 } from "lucide-react";
-import type { Job, Profile, RadarData, TrackingState } from "@/lib/domain";
-import { trackingStates } from "@/lib/domain";
+import type {
+  Job,
+  Profile,
+  RadarData,
+  TrackingState,
+  Feedback,
+} from "@/lib/domain";
+import { trackingStates, sources, sourceNames } from "@/lib/domain";
 import { filterJobs } from "@/lib/filters";
+import { JobReview } from "./job-review";
+import { ThemeToggle } from "./theme-toggle";
 
-const sourceNames = { himalayas: "Himalayas", remotive: "Remotive" };
 const statusNames: Record<TrackingState, string> = {
   nueva: "Nueva",
   guardada: "Guardada",
@@ -114,6 +123,7 @@ function JobCard({
   busy,
   update,
   reportError,
+  review,
 }: {
   job: Job;
   enabled: boolean;
@@ -123,6 +133,7 @@ function JobCard({
     patch: { status?: TrackingState; seen?: boolean },
   ) => Promise<void>;
   reportError: (text: string) => void;
+  review: React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const markSeen = () => {
@@ -206,6 +217,7 @@ function JobCard({
       </div>
       <p className="geo-reason">{job.eligibility_reason}</p>
       <p className="excerpt">{job.description.slice(0, 550)}</p>
+      {review}
       {expanded && (
         <div className="job-details">
           <h3>Compatibilidad técnica</h3>
@@ -339,6 +351,17 @@ export function RadarApp({ initial }: { initial: RadarData }) {
   const [tracking, setTracking] = useState("all");
   const [sort, setSort] = useState("fit");
   const [validity, setValidity] = useState("open");
+  const [language, setLanguage] = useState<
+    "prefer_spanish" | "spanish_only" | "all"
+  >("prefer_spanish");
+  const [feedbackFilter, setFeedbackFilter] = useState("all");
+  const [adLanguages, setAdLanguages] = useState(["es", "en", "other"]);
+  const [includeEnglishRequired, setIncludeEnglishRequired] = useState(true);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState("");
+  const [analysisTokens, setAnalysisTokens] = useState(0);
   const [limit, setLimit] = useState(15);
   const [syncing, setSyncing] = useState(false);
   const [busyIds, setBusyIds] = useState<string[]>([]);
@@ -357,6 +380,10 @@ export function RadarApp({ initial }: { initial: RadarData }) {
         tracking,
         sort,
         validity,
+        language,
+        feedback: feedbackFilter,
+        adLanguages,
+        includeEnglishRequired,
       }),
     [
       data.jobs,
@@ -368,9 +395,118 @@ export function RadarApp({ initial }: { initial: RadarData }) {
       tracking,
       sort,
       validity,
+      language,
+      feedbackFilter,
+      adLanguages,
+      includeEnglishRequired,
     ],
   );
   const latestRun = data.runs[0];
+  const canAnalyze =
+    enabled && Boolean(data.groq?.configured) && !analyzing && !syncing;
+  function selectAnalysis(id: string, checked: boolean) {
+    if (checked && selected.length >= (data.groq?.maxBatch ?? 3)) {
+      setError("Seleccioná hasta tres ofertas por lote.");
+      return;
+    }
+    setSelected((current) =>
+      checked
+        ? [...new Set([...current, id])]
+        : current.filter((v) => v !== id),
+    );
+  }
+  async function feedback(id: string, value: Feedback) {
+    setBusyIds((ids) => [...new Set([...ids, id])]);
+    setError("");
+    try {
+      const response = await fetch(`/api/jobs/${id}/feedback`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(value),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error || "No se pudo guardar la evaluación.");
+      setData((current) => ({
+        ...current,
+        jobs: current.jobs.map((job) =>
+          job.id === id ? { ...job, feedback: result.feedback } : job,
+        ),
+      }));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Falló la evaluación.");
+    } finally {
+      setBusyIds((ids) => ids.filter((v) => v !== id));
+    }
+  }
+  async function analyze(ids: string[]) {
+    const bounded = [...new Set(ids)].slice(0, data.groq?.maxBatch ?? 3);
+    if (!bounded.length) return;
+    setAnalyzing(true);
+    setError("");
+    setAnalysisTokens(0);
+    let completed = 0,
+      tokens = 0,
+      failed = 0;
+    try {
+      for (const [index, id] of bounded.entries()) {
+        setAnalysisId(id);
+        setAnalysisProgress(
+          `Analizando ${index + 1} de ${bounded.length}. Solo se envían las ofertas elegidas.`,
+        );
+        try {
+          const response = await fetch("/api/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId: id }),
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            if (result.retryAt)
+              setData((d) => ({
+                ...d,
+                groq: d.groq
+                  ? { ...d.groq, retryAt: result.retryAt }
+                  : undefined,
+              }));
+            throw Object.assign(
+              new Error(result.error || "Falló el análisis."),
+              { stop: [401, 403, 429, 503].includes(response.status) },
+            );
+          }
+          completed++;
+          if (!result.cached)
+            tokens +=
+              result.analysis.input_tokens + result.analysis.output_tokens;
+          setAnalysisTokens(tokens);
+          setData((current) => ({
+            ...current,
+            jobs: current.jobs.map((j) =>
+              j.id === id ? { ...j, analysis: result.analysis } : j,
+            ),
+          }));
+        } catch (error) {
+          failed++;
+          setError(error instanceof Error ? error.message : "Falló Groq.");
+          if ((error as { stop?: boolean }).stop) break;
+        }
+      }
+    } finally {
+      setAnalyzing(false);
+      setAnalysisId(null);
+      setSelected([]);
+      setAnalysisProgress(
+        `Lote terminado: ${completed} análisis disponibles, ${failed} errores. ${tokens} tokens consumidos en respuestas válidas; caché sin consumo adicional.`,
+      );
+      try {
+        await refresh();
+      } catch {
+        setError(
+          "El lote terminó, pero no se pudo actualizar la lista. Recargá para leer los resultados guardados.",
+        );
+      }
+    }
+  }
   const counts = {
     web: data.jobs.filter((j) => j.profiles.includes("web")).length,
     game_dev: data.jobs.filter((j) => j.profiles.includes("game_dev")).length,
@@ -451,6 +587,10 @@ export function RadarApp({ initial }: { initial: RadarData }) {
     setDays("all");
     setTracking("all");
     setValidity("open");
+    setLanguage("prefer_spanish");
+    setFeedbackFilter("all");
+    setAdLanguages(["es", "en", "other"]);
+    setIncludeEnglishRequired(true);
     setLimit(15);
   }
 
@@ -500,7 +640,7 @@ export function RadarApp({ initial }: { initial: RadarData }) {
         </nav>
         <div className="sidebar-sources">
           <div className="nav-caption">FUENTES CONECTADAS</div>
-          {(["himalayas", "remotive"] as const).map((s) => {
+          {sources.map((s) => {
             const run = data.runs.find((r) => r.source === s);
             return (
               <div className="source-item" key={s}>
@@ -520,6 +660,12 @@ export function RadarApp({ initial }: { initial: RadarData }) {
           </button>
         </div>
         <div className="sidebar-bottom">
+          {enabled && (
+            <a className="export-feedback" href="/api/feedback/export" download>
+              <Download size={14} />
+              Exportar mis evaluaciones
+            </a>
+          )}
           <div className="location-card">
             <Globe2 size={18} />
             <div>
@@ -539,10 +685,13 @@ export function RadarApp({ initial }: { initial: RadarData }) {
           <span className="breadcrumb">
             Mi espacio <span>/</span> <strong>Oportunidades</strong>
           </span>
-          <span className="personal-label">
-            <span className="dot" />
-            Búsqueda personal
-          </span>
+          <div className="topbar-actions">
+            <ThemeToggle />
+            <span className="personal-label">
+              <span className="dot" />
+              Búsqueda personal
+            </span>
+          </div>
         </header>
         <main className="main-content">
           <div className="page-heading">
@@ -556,7 +705,7 @@ export function RadarApp({ initial }: { initial: RadarData }) {
             <button
               className="primary sync-button"
               onClick={() => void sync()}
-              disabled={syncing}
+              disabled={syncing || analyzing}
             >
               {syncing ? (
                 <LoaderCircle size={17} className="spin" />
@@ -672,11 +821,50 @@ export function RadarApp({ initial }: { initial: RadarData }) {
                 <SlidersHorizontal size={15} /> Afiná tu búsqueda
               </span>
             </div>
+            <div className="language-switches">
+              <fieldset>
+                <legend>Idioma del anuncio</legend>
+                {[
+                  { key: "es", label: "Español" },
+                  { key: "en", label: "Inglés" },
+                  { key: "other", label: "Otros / sin determinar" },
+                ].map((option) => (
+                  <label key={option.key}>
+                    <input
+                      type="checkbox"
+                      checked={adLanguages.includes(option.key)}
+                      onChange={(e) => {
+                        setAdLanguages((current) =>
+                          e.target.checked
+                            ? [...new Set([...current, option.key])]
+                            : current.filter((v) => v !== option.key),
+                        );
+                        setLimit(15);
+                      }}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </fieldset>
+              <label className="english-work-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeEnglishRequired}
+                  onChange={(e) => setIncludeEnglishRequired(e.target.checked)}
+                />
+                Incluir inglés laboral obligatorio
+              </label>
+              <p>
+                El idioma del anuncio y el de comunicación del equipo se filtran
+                por separado.
+              </p>
+            </div>
             <div className="filters-row">
               <Filter label="Fuente" value={source} onChange={setSource}>
                 <option value="all">Todas las fuentes</option>
                 <option value="himalayas">Himalayas</option>
                 <option value="remotive">Remotive</option>
+                <option value="getonbrd">Get on Board</option>
               </Filter>
               <Filter
                 label="Elegibilidad geográfica"
@@ -716,7 +904,102 @@ export function RadarApp({ initial }: { initial: RadarData }) {
                 <option value="closed">Cerradas</option>
                 <option value="expired">Vencidas</option>
               </Filter>
+              <Filter
+                label="Idioma laboral"
+                value={language}
+                onChange={(value) => setLanguage(value as typeof language)}
+              >
+                <option value="prefer_spanish">Priorizar español</option>
+                <option value="spanish_only">Solo español confirmado</option>
+                <option value="all">Todos los idiomas</option>
+              </Filter>
+              <Filter
+                label="Mi evaluación"
+                value={feedbackFilter}
+                onChange={setFeedbackFilter}
+              >
+                <option value="all">Todas</option>
+                <option value="sin_evaluar">Sin evaluar</option>
+                <option value="me_interesa">Me interesa</option>
+                <option value="no_encaja">No encaja</option>
+              </Filter>
             </div>
+          </section>
+          <section
+            className="analysis-toolbar"
+            aria-label="Análisis manual de ofertas"
+          >
+            <div>
+              <h2>
+                <Sparkles
+                  size={14}
+                  style={{ display: "inline", verticalAlign: "middle" }}
+                />{" "}
+                Análisis opcional con Groq
+              </h2>
+              <p>
+                {data.groq?.configured
+                  ? `${data.groq.model} · Hasta ${data.groq.maxBatch} ofertas por lote`
+                  : "Groq no está configurado. Las reglas siguen funcionando."}
+              </p>
+              <p>
+                El orden recomendado prioriza geografía, español y afinidad. Las
+                ofertas ambiguas siguen visibles.
+              </p>
+            </div>
+            <div className="analysis-toolbar-actions">
+              {enabled && (
+                <a
+                  className="export-feedback mobile-export"
+                  href="/api/feedback/export"
+                  download
+                >
+                  <Download size={14} />
+                  Exportar evaluaciones
+                </a>
+              )}
+              <button
+                className="secondary"
+                disabled={!canAnalyze || !selected.length}
+                onClick={() => void analyze(selected)}
+              >
+                Analizar seleccionadas ({selected.length})
+              </button>
+              <button
+                className="secondary"
+                disabled={!canAnalyze}
+                onClick={() =>
+                  void analyze(
+                    filtered
+                      .filter(
+                        (j) =>
+                          j.eligibility !== "descartar" &&
+                          j.feedback.rating !== "no_encaja" &&
+                          !(
+                            j.analysis?.current &&
+                            j.analysis.status === "success"
+                          ),
+                      )
+                      .slice(0, 3)
+                      .map((j) => j.id),
+                  )
+                }
+              >
+                Analizar hasta 3 candidatas
+              </button>
+            </div>
+            {analysisProgress && (
+              <p className="analysis-progress" role="status" aria-live="polite">
+                {analysisProgress}
+                {analyzing ? ` · ${analysisTokens} tokens confirmados` : ""}
+              </p>
+            )}
+            {data.groq?.retryAt && (
+              <p className="analysis-error">
+                Límite de Groq: reintentar después de{" "}
+                {timeFormat.format(new Date(data.groq.retryAt))}.
+              </p>
+            )}
           </section>
           {showRuns && (
             <section className="sync-log">
@@ -774,7 +1057,7 @@ export function RadarApp({ initial }: { initial: RadarData }) {
               <ArrowDownWideNarrow size={14} />
               <span className="sr-only">Ordenar ofertas</span>
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="fit">Afinidad y descubrimiento</option>
+                <option value="fit">Orden recomendado</option>
                 <option value="discovered">Descubiertas recientemente</option>
                 <option value="published">Publicadas recientemente</option>
               </select>
@@ -794,6 +1077,19 @@ export function RadarApp({ initial }: { initial: RadarData }) {
                 busy={busyIds.includes(job.id)}
                 update={update}
                 reportError={setError}
+                review={
+                  <JobReview
+                    job={job}
+                    enabled={enabled}
+                    busy={busyIds.includes(job.id)}
+                    canAnalyze={canAnalyze}
+                    analyzing={analysisId === job.id}
+                    selected={selected.includes(job.id)}
+                    onSelect={selectAnalysis}
+                    onAnalyze={(ids) => void analyze(ids)}
+                    onFeedback={(id, value) => void feedback(id, value)}
+                  />
+                }
               />
             ))}
             {filtered.length === 0 && (
@@ -809,7 +1105,7 @@ export function RadarApp({ initial }: { initial: RadarData }) {
                 <p>
                   {data.jobs.length
                     ? "No hay ofertas con estos filtros. Podés cambiar de perfil o revisar las restricciones."
-                    : "Sincronizá para traer oportunidades reales de Himalayas y Remotive."}
+                    : "Sincronizá para traer oportunidades reales de Himalayas, Remotive y Get on Board."}
                 </p>
                 <button
                   className="secondary"
@@ -854,6 +1150,14 @@ export function RadarApp({ initial }: { initial: RadarData }) {
                 rel="noopener noreferrer"
               >
                 Remotive
+              </a>
+              {" y "}
+              <a
+                href="https://www.getonbrd.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Get on Board
               </a>
               .
             </span>
